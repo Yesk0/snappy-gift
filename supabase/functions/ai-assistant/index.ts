@@ -1,6 +1,6 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY');
+const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
@@ -46,12 +46,36 @@ function buildSystemPrompt(ctx?: { categories?: string[]; budget_max?: number | 
   return lines.length ? `${BASE_PROMPT}\n\nUser profile:\n${lines.join('\n')}` : BASE_PROMPT;
 }
 
+type GeminiContent = { role: 'user' | 'model'; parts: [{ text: string }] };
+
+function toGeminiContents(messages: Array<{ role: string; content: string }>): GeminiContent[] {
+  const mapped: GeminiContent[] = messages.map(m => ({
+    role: (m.role === 'assistant' ? 'model' : 'user') as 'user' | 'model',
+    parts: [{ text: m.content || ' ' }],
+  }));
+
+  // Gemini requires first turn to be "user"
+  while (mapped.length > 0 && mapped[0].role === 'model') mapped.shift();
+
+  // Merge consecutive same-role messages (Gemini disallows them)
+  const result: GeminiContent[] = [];
+  for (const msg of mapped) {
+    const last = result[result.length - 1];
+    if (last && last.role === msg.role) {
+      last.parts[0].text += '\n' + msg.parts[0].text;
+    } else {
+      result.push({ role: msg.role, parts: [{ text: msg.parts[0].text }] });
+    }
+  }
+  return result;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
   try {
-    if (!ANTHROPIC_API_KEY) {
-      return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured on the server' }), {
+    if (!GEMINI_API_KEY) {
+      return new Response(JSON.stringify({ error: 'GEMINI_API_KEY not configured on the server' }), {
         status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
@@ -95,43 +119,44 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    const anthropicResp = await fetch('https://api.anthropic.com/v1/messages', {
+    const contents = toGeminiContents(trimmed);
+    if (contents.length === 0) {
+      return new Response(JSON.stringify({ error: 'No valid messages' }), {
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const geminiUrl =
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse&key=${GEMINI_API_KEY}`;
+
+    const geminiResp = await fetch(geminiUrl, {
       method: 'POST',
-      headers: {
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1024,
-        system: buildSystemPrompt(userContext),
-        messages: trimmed.map((m: { role: string; content: string }) => ({
-          role: m.role === 'assistant' ? 'assistant' : 'user',
-          content: m.content,
-        })),
-        stream: true,
+        system_instruction: { parts: [{ text: buildSystemPrompt(userContext) }] },
+        contents,
+        generationConfig: { maxOutputTokens: 1024 },
       }),
     });
 
-    if (anthropicResp.status === 429) {
+    if (geminiResp.status === 429) {
       return new Response(JSON.stringify({ error: 'Rate limit exceeded. Please try again.' }), {
         status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-    if (!anthropicResp.ok || !anthropicResp.body) {
-      const errText = await anthropicResp.text().catch(() => '');
-      console.error('Anthropic API error', anthropicResp.status, errText);
+    if (!geminiResp.ok || !geminiResp.body) {
+      const errText = await geminiResp.text().catch(() => '');
+      console.error('Gemini API error', geminiResp.status, errText);
       return new Response(JSON.stringify({ error: 'AI service error' }), {
         status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Transform Anthropic SSE → OpenAI-compatible SSE (what the client expects)
+    // Transform Gemini SSE → OpenAI-compatible SSE format (what the client expects)
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
-        const reader = anthropicResp.body!.getReader();
+        const reader = geminiResp.body!.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
         try {
@@ -147,8 +172,9 @@ Deno.serve(async (req: Request) => {
               if (!data) continue;
               try {
                 const event = JSON.parse(data);
-                if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta' && event.delta.text) {
-                  const chunk = JSON.stringify({ choices: [{ delta: { content: event.delta.text } }] });
+                const text = event.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (text) {
+                  const chunk = JSON.stringify({ choices: [{ delta: { content: text } }] });
                   controller.enqueue(encoder.encode(`data: ${chunk}\n\n`));
                 }
               } catch {
