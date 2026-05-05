@@ -47,14 +47,22 @@ const CorporateEvent = () => {
 
   const load = async () => {
     if (!id) return;
-    const { data: ev } = await supabase.from("corporate_events").select("*").eq("id", id).maybeSingle();
-    if (ev) setEvent(ev as Event);
-    const { data: ps } = await supabase.from("corporate_participants").select("*").eq("event_id", id).order("created_at");
-    if (ps) setParticipants(ps as Participant[]);
-    setLoading(false);
+    try {
+      const { data: ev, error: evErr } = await supabase.from("corporate_events").select("*").eq("id", id).maybeSingle();
+      if (evErr) throw evErr;
+      if (ev) setEvent(ev as Event);
+      const { data: ps, error: psErr } = await supabase.from("corporate_participants").select("*").eq("event_id", id).order("created_at");
+      if (psErr) throw psErr;
+      if (ps) setParticipants(ps as Participant[]);
+    } catch {
+      toast.error("Ошибка загрузки данных");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [id]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [id]);
 
   const addParticipant = async () => {
     if (!id) return;
@@ -105,7 +113,8 @@ const CorporateEvent = () => {
 
   const removeParticipant = async (pid: string) => {
     if (event?.assignments_generated) { toast.error("Нельзя менять список после распределения"); return; }
-    await supabase.from("corporate_participants").delete().eq("id", pid);
+    const { error } = await supabase.from("corporate_participants").delete().eq("id", pid);
+    if (error) { toast.error("Не удалось удалить участника"); return; }
     load();
   };
 
