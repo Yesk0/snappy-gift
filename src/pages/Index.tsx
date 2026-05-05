@@ -5,10 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Gift, Sparkles, Heart, Users, Zap, Shield, ArrowRight, Check } from "lucide-react";
 import { useLocale } from "@/contexts/LocaleContext";
+import { useAuth } from "@/hooks/useAuth";
 
 const Index = () => {
   const { t } = useLocale();
   const l = t.landing;
+  const { user } = useAuth();
+  const giftLink = user ? "/create-gift" : "/register";
 
   const steps = [
     { icon: Gift,     title: l.step1Title, text: l.step1Text },
@@ -44,7 +47,7 @@ const Index = () => {
               {l.heroPara}
             </p>
             <div className="mt-10 flex flex-col items-center justify-center gap-3 sm:flex-row">
-              <Link to="/register">
+              <Link to={giftLink}>
                 <Button size="lg" className="gradient-warm px-8 text-primary-foreground shadow-warm hover:opacity-90">
                   {l.createGift}
                   <ArrowRight className="ml-2 h-4 w-4" />
@@ -134,7 +137,7 @@ const Index = () => {
         <Card className="gradient-warm overflow-hidden border-0 p-12 text-center shadow-warm md:p-20">
           <h2 className="text-4xl font-semibold text-primary-foreground md:text-5xl">{l.ctaTitle}</h2>
           <p className="mx-auto mt-4 max-w-xl text-primary-foreground/90">{l.ctaSub}</p>
-          <Link to="/register" className="mt-8 inline-block">
+          <Link to={giftLink} className="mt-8 inline-block">
             <Button size="lg" variant="secondary" className="px-10">
               {l.ctaBtn}
               <ArrowRight className="ml-2 h-4 w-4" />
