@@ -42,15 +42,18 @@ const Dashboard = () => {
         .select("*")
         .eq("sender_id", user.id)
         .order("created_at", { ascending: false });
-      if (!error && data) setBoxes(data as GiftBox[]);
+      if (error) toast.error("Не удалось загрузить подарки");
+      if (data) setBoxes(data as GiftBox[]);
       setLoading(false);
     })();
   }, [user]);
 
   const copyLink = (token: string) => {
     const url = `${window.location.origin}/gift/${token}`;
-    navigator.clipboard.writeText(url);
-    toast.success("Ссылка скопирована");
+    navigator.clipboard.writeText(url).then(
+      () => toast.success("Ссылка скопирована"),
+      () => toast.error("Не удалось скопировать ссылку")
+    );
   };
 
   return (
