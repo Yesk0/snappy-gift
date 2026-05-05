@@ -40,7 +40,8 @@ const CreateGift = () => {
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.from("products").select("*");
+      const { data, error } = await supabase.from("products").select("*");
+      if (error) toast.error("Не удалось загрузить товары");
       if (data) setProducts(data as Product[]);
       setLoadingProducts(false);
     })();
@@ -72,45 +73,62 @@ const CreateGift = () => {
     });
   };
 
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
   const canContinue = {
-    1: recipientEmail.includes("@") && occasion.trim().length > 0,
+    1: EMAIL_RE.test(recipientEmail.trim()) && occasion.trim().length > 0,
     2: selected.size >= 2,
     3: true,
   } as Record<number, boolean>;
 
+  const resetForm = () => {
+    setStep(1);
+    setRecipientName("");
+    setRecipientEmail("");
+    setOccasion("");
+    setBudget("");
+    setMessage("");
+    setSelected(new Set());
+    setCategoryFilter("all");
+    setResultToken(null);
+  };
+
   const handleSubmit = async () => {
     if (!user) return;
     setSubmitting(true);
-    const { data: box, error } = await supabase
-      .from("gift_boxes")
-      .insert({
-        sender_id: user.id,
-        recipient_name: recipientName || null,
-        recipient_email: recipientEmail,
-        occasion: occasion || null,
-        budget: budget ? Number(budget) : null,
-        message: message || null,
-      })
-      .select("*")
-      .single();
+    try {
+      const { data: box, error } = await supabase
+        .from("gift_boxes")
+        .insert({
+          sender_id: user.id,
+          recipient_name: recipientName || null,
+          recipient_email: recipientEmail.trim(),
+          occasion: occasion || null,
+          budget: budget ? Number(budget) : null,
+          message: message || null,
+        })
+        .select("*")
+        .single();
 
-    if (error || !box) {
+      if (error || !box) {
+        toast.error("Не удалось создать подарок");
+        return;
+      }
+
+      const items = Array.from(selected).map((product_id) => ({ gift_box_id: box.id, product_id }));
+      const { error: itemsError } = await supabase.from("gift_box_items").insert(items);
+      if (itemsError) {
+        toast.error("Не удалось добавить товары в box");
+        return;
+      }
+
+      setResultToken(box.unique_token);
+      setStep(4);
+    } catch {
+      toast.error("Ошибка сети. Проверьте соединение и попробуйте снова.");
+    } finally {
       setSubmitting(false);
-      toast.error("Не удалось создать подарок");
-      return;
     }
-
-    const items = Array.from(selected).map((product_id) => ({ gift_box_id: box.id, product_id }));
-    const { error: itemsError } = await supabase.from("gift_box_items").insert(items);
-    if (itemsError) {
-      setSubmitting(false);
-      toast.error("Не удалось добавить товары в box");
-      return;
-    }
-
-    setResultToken(box.unique_token);
-    setStep(4);
-    setSubmitting(false);
   };
 
   const copyLink = () => {
@@ -241,8 +259,8 @@ const CreateGift = () => {
               </Button>
             </div>
             <div className="mt-8 flex justify-center gap-3">
-              <Button variant="outline" onClick={() => navigate("/dashboard")}>В мои подарки</Button>
-              <Button onClick={() => window.location.reload()} className="gradient-warm text-primary-foreground">
+              <Button type="button" variant="outline" onClick={() => navigate("/dashboard")}>В мои подарки</Button>
+              <Button type="button" onClick={resetForm} className="gradient-warm text-primary-foreground">
                 Создать ещё
               </Button>
             </div>
