@@ -86,12 +86,12 @@ const Profile = () => {
     setSaving(true);
     const { error } = await supabase
       .from("profiles")
-      .update({
+      .upsert({
+        id: user.id,
         name,
         preferences: preferences as any,
         privacy_settings: privacy as any,
-      })
-      .eq("id", user.id);
+      }, { onConflict: "id" });
     setSaving(false);
     if (error) {
       toast.error("Не удалось сохранить изменения");
