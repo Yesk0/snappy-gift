@@ -1,6 +1,6 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
+import { createClient } from '@supabase/supabase-js';
 
-const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY');
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
@@ -37,7 +37,7 @@ Rules:
 - Warm, human tone. No corporate jargon. No emojis overload (max 1 per reply).
 - If the user is vague ("something nice"), nudge them with empathy, not a checklist.`;
 
-function buildPrompt(ctx?: { categories?: string[]; budget_max?: number | null; allergies?: string[] }): string {
+function buildSystemPrompt(ctx?: { categories?: string[]; budget_max?: number | null; allergies?: string[] }): string {
   if (!ctx) return BASE_PROMPT;
   const lines: string[] = [];
   if (ctx.categories?.length) lines.push(`User's favourite categories: ${ctx.categories.join(', ')}.`);
@@ -50,7 +50,11 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
   try {
-    if (!LOVABLE_API_KEY) throw new Error('LOVABLE_API_KEY not configured');
+    if (!ANTHROPIC_API_KEY) {
+      return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured on the server' }), {
+        status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
@@ -91,34 +95,76 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const anthropicResp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, 'Content-Type': 'application/json' },
+      headers: {
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({
-        model: 'google/gemini-3-flash-preview',
-        messages: [{ role: 'system', content: buildPrompt(userContext) }, ...trimmed],
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 1024,
+        system: buildSystemPrompt(userContext),
+        messages: trimmed.map((m: { role: string; content: string }) => ({
+          role: m.role === 'assistant' ? 'assistant' : 'user',
+          content: m.content,
+        })),
         stream: true,
       }),
     });
 
-    if (response.status === 429) {
+    if (anthropicResp.status === 429) {
       return new Response(JSON.stringify({ error: 'Rate limit exceeded. Please try again.' }), {
         status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-    if (response.status === 402) {
-      return new Response(JSON.stringify({ error: 'AI credits exhausted.' }), {
-        status: 402, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-    if (!response.ok) {
-      console.error('AI gateway error', response.status, await response.text());
-      return new Response(JSON.stringify({ error: 'AI gateway error' }), {
+    if (!anthropicResp.ok || !anthropicResp.body) {
+      const errText = await anthropicResp.text().catch(() => '');
+      console.error('Anthropic API error', anthropicResp.status, errText);
+      return new Response(JSON.stringify({ error: 'AI service error' }), {
         status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    return new Response(response.body, {
+    // Transform Anthropic SSE → OpenAI-compatible SSE (what the client expects)
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(controller) {
+        const reader = anthropicResp.body!.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() ?? '';
+            for (const line of lines) {
+              if (!line.startsWith('data: ')) continue;
+              const data = line.slice(6).trim();
+              if (!data) continue;
+              try {
+                const event = JSON.parse(data);
+                if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta' && event.delta.text) {
+                  const chunk = JSON.stringify({ choices: [{ delta: { content: event.delta.text } }] });
+                  controller.enqueue(encoder.encode(`data: ${chunk}\n\n`));
+                }
+              } catch {
+                // skip malformed event line
+              }
+            }
+          }
+        } finally {
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+          controller.close();
+          reader.releaseLock();
+        }
+      },
+    });
+
+    return new Response(stream, {
       headers: { ...corsHeaders, 'Content-Type': 'text/event-stream' },
     });
   } catch (e) {
