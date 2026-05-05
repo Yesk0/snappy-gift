@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
 import { supabase } from "@/integrations/supabase/client";
 import { Search, SlidersHorizontal, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { AiAssistant } from "@/components/AiAssistant";
 import { useLocale } from "@/contexts/LocaleContext";
 import { useDebounce } from "@/hooks/useDebounce";
@@ -20,7 +21,7 @@ const Catalog = () => {
   const [loading, setLoading] = useState(true);
   const [searchRaw, setSearchRaw] = useState("");
   const search = useDebounce(searchRaw, 300);
-  const [category, setCategory] = useState<string>("all");
+  const [category, setCategory] = useState("all");
   const [priceRange, setPriceRange] = useState<[number, number]>([0, 500]);
   const [page, setPage] = useState(1);
 
@@ -30,7 +31,8 @@ const Catalog = () => {
         .from("products")
         .select("*")
         .order("created_at", { ascending: false });
-      if (!error && data) setProducts(data as Product[]);
+      if (error) toast.error("Не удалось загрузить каталог");
+      if (data) setProducts(data as Product[]);
       setLoading(false);
     })();
   }, []);
@@ -39,12 +41,12 @@ const Catalog = () => {
 
   const categories = useMemo(() => {
     const set = new Set(products.map((p) => p.category));
-    return [t.catalog.all, ...Array.from(set)];
-  }, [products, t]);
+    return ["all", ...Array.from(set)];
+  }, [products]);
 
   const filtered = useMemo(() => {
     return products.filter((p) => {
-      if (category !== t.catalog.all && p.category !== category) return false;
+      if (category !== "all" && p.category !== category) return false;
       if (search && !(`${p.name} ${p.description}`.toLowerCase().includes(search.toLowerCase()))) return false;
       const price = Number(p.price);
       if (price < priceRange[0] || price > priceRange[1]) return false;
@@ -97,7 +99,7 @@ const Catalog = () => {
                           : "border-border hover:border-primary/40"
                       }`}
                     >
-                      {c}
+                      {c === "all" ? t.catalog.all : c}
                     </button>
                   ))}
                 </div>
@@ -119,7 +121,7 @@ const Catalog = () => {
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => { setSearchRaw(""); setCategory(t.catalog.all); setPriceRange([0, 500]); }}
+                onClick={() => { setSearchRaw(""); setCategory("all"); setPriceRange([0, 500]); }}
                 className="w-full"
               >
                 {t.catalog.reset}
