@@ -20,7 +20,7 @@ const Register = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (password.length < 6) {
-      toast.error(t.auth.passwordPlaceholder);
+      toast.error("Пароль должен быть минимум 6 символов");
       return;
     }
     setLoading(true);
