@@ -118,13 +118,17 @@ export const AiAssistant = () => {
               scrollDown();
             }
           } catch {
-            buffer = line + "\n" + buffer;
-            break;
+            // skip malformed SSE data line
           }
         }
       }
     } catch {
       toast.error(t.ai.networkError);
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last?.role === "assistant" && !last.content) return prev.slice(0, -1);
+        return prev;
+      });
     } finally {
       setLoading(false);
     }
