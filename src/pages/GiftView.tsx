@@ -28,57 +28,63 @@ const GiftView = () => {
   useEffect(() => {
     if (!token) return;
     (async () => {
-      const { data: b } = await supabase
-        .from("gift_boxes")
-        .select("id, recipient_name, message, occasion, status")
-        .eq("unique_token", token)
-        .maybeSingle();
+      try {
+        const { data: b, error: boxError } = await supabase
+          .from("gift_boxes")
+          .select("id, recipient_name, message, occasion, status")
+          .eq("unique_token", token)
+          .maybeSingle();
 
-      if (!b) { setLoading(false); return; }
-      setBox(b as Box);
+        if (boxError) throw boxError;
+        if (!b) return;
+        setBox(b as Box);
 
-      const { data: itemRows } = await supabase
-        .from("gift_box_items")
-        .select("product_id, products:product_id(*)")
-        .eq("gift_box_id", b.id);
-      const prods = (itemRows || []).map((r: any) => r.products).filter(Boolean);
-      setItems(prods as Product[]);
+        const { data: itemRows, error: itemsError } = await supabase
+          .from("gift_box_items")
+          .select("product_id, products:product_id(*)")
+          .eq("gift_box_id", b.id);
+        if (itemsError) throw itemsError;
+        const prods = (itemRows || []).map((r: any) => r.products).filter(Boolean);
+        setItems(prods as Product[]);
 
-      // mark as viewed if still pending
-      if (b.status === "pending") {
-        await supabase.from("gift_boxes").update({ status: "viewed" }).eq("id", b.id);
+        if (b.status === "pending") {
+          await supabase.from("gift_boxes").update({ status: "viewed" }).eq("id", b.id);
+        }
+
+        const { data: sel } = await supabase
+          .from("selections")
+          .select("selected_product_id, products:selected_product_id(*)")
+          .eq("gift_box_id", b.id)
+          .maybeSingle();
+        if (sel?.products) {
+          setExistingSelection(sel.products as Product);
+          setDone(true);
+        }
+      } catch {
+        toast.error("Ошибка загрузки. Попробуйте обновить страницу.");
+      } finally {
+        setLoading(false);
       }
-
-      // existing selection?
-      const { data: sel } = await supabase
-        .from("selections")
-        .select("selected_product_id, products:selected_product_id(*)")
-        .eq("gift_box_id", b.id)
-        .maybeSingle();
-      if (sel?.products) {
-        setExistingSelection(sel.products as Product);
-        setDone(true);
-      }
-      setLoading(false);
     })();
   }, [token]);
 
   const confirmChoice = async () => {
     if (!box || !selectedId) return;
     setConfirming(true);
-    const { error } = await supabase.from("selections").insert({
-      gift_box_id: box.id,
-      selected_product_id: selectedId,
-    });
-    if (error) {
-      toast.error("Не удалось сохранить выбор");
+    try {
+      const { error } = await supabase.from("selections").insert({
+        gift_box_id: box.id,
+        selected_product_id: selectedId,
+      });
+      if (error) { toast.error("Не удалось сохранить выбор"); return; }
+      await supabase.from("gift_boxes").update({ status: "selected" }).eq("id", box.id);
+      setDone(true);
+      setExistingSelection(items.find((i) => i.id === selectedId) || null);
+    } catch {
+      toast.error("Ошибка сети. Попробуйте ещё раз.");
+    } finally {
       setConfirming(false);
-      return;
     }
-    await supabase.from("gift_boxes").update({ status: "selected" }).eq("id", box.id);
-    setDone(true);
-    setExistingSelection(items.find((i) => i.id === selectedId) || null);
-    setConfirming(false);
   };
 
   if (loading) {
