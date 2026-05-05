@@ -68,6 +68,9 @@ const Corporate = () => {
     if (error || !data) { toast.error("Не удалось создать событие"); return; }
     toast.success("Событие создано");
     setOpen(false);
+    setName("");
+    setDescription("");
+    setBudget("1500");
     navigate(`/corporate/${data.id}`);
   };
 
@@ -101,7 +104,7 @@ const Corporate = () => {
             {[
               { icon: Zap, title: "Автораспределение", text: "Алгоритм derangement гарантирует, что никто не достанется сам себе" },
               { icon: Shield, title: "Полная анонимность", text: "Участники видят только того, кому дарят — не организатора" },
-              { icon: Users, title: "Любой размер команды", text: "От 2 до 500 человек в одном событии" },
+              { icon: Users, title: "Любой размер команды", text: "От 3 до 500 человек в одном событии" },
             ].map((f) => (
               <Card key={f.title} className="border-border/50 p-8">
                 <div className="flex h-12 w-12 items-center justify-center rounded-xl gradient-warm shadow-warm">
